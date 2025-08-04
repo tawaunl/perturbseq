@@ -1,0 +1,22 @@
+scratch_dir: "/gstore/scratch/u/kammj2/ngs5388_collaborative/002_initial_processing"
+
+cumulus_out_dir: "/gstore/data/ctgbioinfo/tgi_data_concierge/ngs5388/output_3"
+sunrise_cellbender_path: "/gstore/data/genomics/congee_rest_runs/669e99e1f79a145e5354adc2"
+
+results_dir: "results"
+
+lib_csv: "../data/Pilot 9 Trem2 FE perturb - Sample_mapping_for_MThitslims.csv"
+
+cc_genes_path: "../data/seurat_cc_genes.csv"
+
+mt_manual_cutoff: 25
+gene_manual_cutoff: 700
+hto_diversity_cutoff: 3.5
+gex_manual_cutoff: 1000
+hto_manual_cutoff: 30
+adt_manual_cutoff: 200
+sgrna_grid_denom_pseudo_max: 12
+
+adt_medpolish_keep_thresh: .95
+leiden_res: 1
+leiden_res2: 2

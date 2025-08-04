@@ -1,0 +1,314 @@
+configfile: "config.yaml"
+
+import os
+import pandas as pd
+
+os.makedirs(config["scratch_dir"], exist_ok=True)
+os.makedirs(config["results_dir"], exist_ok=True)
+
+lib_df = pd.read_csv(config['lib_csv'])
+
+merge_raw_multimodal_out_pre = os.path.join(
+    config["scratch_dir"],
+    "merge_raw_multimodal_barcodes.txt"
+)
+
+merge_raw_multimodal_out = merge_raw_multimodal_out_pre + ".gz"
+
+refine_dbl_prefix = os.path.join(
+    config['scratch_dir'], 'refine_dbl'
+)
+
+rule convert_mdata_to_sce_filt:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'convert_mdata_to_sce_filt.Rds'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'add_wnn_leiden.h5mu'
+        )
+    threads: 2
+    resources:
+        mem_mb=32000
+    shell:
+        "Rscript mudata_to_sce_for_dsdb.R {input} {output}"
+
+rule add_wnn_leiden:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'add_wnn_leiden.h5mu'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'filter_hiqual_cells.h5mu'
+        )
+    threads: 4
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        python add_wnn_leiden.py \
+        {config[leiden_res]} \
+        {config[leiden_res2]} \
+        {input} {output}
+        """
+
+rule filter_hiqual_cells:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'filter_hiqual_cells.h5mu'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'update_metadata.h5mu'
+        )
+    threads: 7
+    resources:
+        mem_mb=32000
+    shell:
+        "python filter_hiqual_cells.py {input} {output} {config[cc_genes_path]}"
+
+rule convert_mdata_to_sce:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'convert_mdata_to_sce.Rds'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'update_metadata.h5mu'
+        )
+    threads: 2
+    resources:
+        mem_mb=64000
+    shell:
+        "Rscript mudata_to_sce_for_dsdb.R {input} {output}"
+
+rule update_metadata:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'update_metadata.h5mu'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'update_adt_umaps.h5mu'
+        )
+    threads: 2
+    resources:
+        mem_mb=16000
+    shell:
+        "python update_metadata.py {input} {output}"
+
+rule update_adt_umaps:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'update_adt_umaps.h5mu'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'renormalize_adt.h5mu'
+        )
+    threads: 7
+    resources:
+        mem_mb=64000
+    shell:
+        "python update_adt_umaps.py {input} {output}"
+
+rule renormalize_adt:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'renormalize_adt.h5mu'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'], 'assign_grnas.h5mu'
+        )
+    threads: 2
+    resources:
+        mem_mb=32000
+    shell:
+        """
+        Rscript renormalize_adt.R \
+        "{input}" \
+        "{output}" \
+        {config[adt_medpolish_keep_thresh]}
+        """
+
+rule assign_grnas:
+    output:
+        os.path.join(
+            config['scratch_dir'], 'assign_grnas.h5mu'
+        ),
+        os.path.join(
+            config['results_dir'], 'assign_grnas_grid_search.csv'
+        ),
+        os.path.join(
+            config['results_dir'], 'assign_grnas_best_params.csv'
+        )
+    input:
+        refine_dbl_prefix + '.h5mu'
+    threads: 2
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        Rscript assign_grnas.R \
+        "{input}" \
+        "{output[0]}" \
+        "{output[1]}" \
+        "{output[2]}" \
+        {config[sgrna_grid_denom_pseudo_max]}
+        """
+
+rule refine_dbl:
+    output:
+        refine_dbl_prefix + '.h5mu',
+        refine_dbl_prefix + '_lda.Rds',
+        os.path.join(
+            config['results_dir'],
+            'refine_dbl_cutoffs.csv'
+        )
+    input:
+        os.path.join(
+            config['scratch_dir'],
+            'add_sgrna_mudata.h5mu'
+        )
+    threads: 4
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        Rscript refine_dbl.R \
+        "{input}" \
+        "{refine_dbl_prefix}" \
+        "{output[2]}"
+        """
+
+rule add_sgrna_mudata:
+    output:
+        os.path.join(
+            config['scratch_dir'],
+            'add_sgrna_mudata.h5mu'
+        )
+    input:
+        os.path.join(config["scratch_dir"], "apply_qc.h5mu"),
+        os.path.join(
+            config['scratch_dir'],
+            'make_sgrna_summarized_experiment.Rds'
+        )
+    threads: 4
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        Rscript add_sgrna_mudata.R \
+        "{input[0]}" \
+        "{input[1]}" \
+        "{output}"
+        """
+
+rule make_sgrna_summarized_experiment:
+    output:
+        os.path.join(
+            config['scratch_dir'],
+            'make_sgrna_summarized_experiment.Rds'
+        )
+    input:
+        merge_raw_multimodal_out,
+        os.path.join(config["scratch_dir"], "combine_sgrna_counts.csv"),
+        os.path.join(config["scratch_dir"], "apply_qc.h5mu")
+    threads: 4
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        Rscript make_sgrna_summarized_experiment.R \
+        "{input[0]}" \
+        "{input[1]}" \
+        "{input[2]}" \
+        "{output}"
+        """
+
+rule merge_raw_multimodal_barcodes:
+    output:
+        merge_raw_multimodal_out
+    threads: 2
+    resources:
+        mem_mb=64000
+    shell:
+        """
+        python merge_raw_multimodal_barcodes.py \
+         {config[cumulus_out_dir]} \
+         \"{config[lib_csv]}\" \
+         {merge_raw_multimodal_out_pre}
+        
+        gzip {merge_raw_multimodal_out_pre}
+        """
+
+rule combine_sgrna_counts:
+    output:
+        os.path.join(config["scratch_dir"], "combine_sgrna_counts.csv")
+    threads: 2
+    resources:
+        mem_mb=16000
+    shell:
+        """
+        Rscript combine_sgrna_counts.R \
+         {config[cumulus_out_dir]} \
+         \"{config[lib_csv]}\" \
+         {output}
+        """
+
+rule apply_qc:
+    input:
+        os.path.join(config["scratch_dir"], "add_basic_stats.h5mu")
+    output:
+        os.path.join(config["scratch_dir"], "apply_qc.h5mu")
+    threads: 4
+    resources:
+        mem_mb=16000,
+        #slurm_extra="--qos=medium"
+    shell:
+        """
+        python apply_qc.py {input} {output} \
+          --mt_manual_cutoff {config[mt_manual_cutoff]} \
+          --gene_manual_cutoff {config[gene_manual_cutoff]} \
+          --hto_diversity_cutoff {config[hto_diversity_cutoff]} \
+          --gex_manual_cutoff {config[gex_manual_cutoff]} \
+          --hto_manual_cutoff {config[hto_manual_cutoff]} \
+          --adt_manual_cutoff {config[adt_manual_cutoff]}
+        """
+
+rule add_basic_stats:
+    input:
+        os.path.join(config["scratch_dir"], "merge_gex_hto_adt.h5mu")
+    output:
+        os.path.join(config["scratch_dir"], "add_basic_stats.h5mu")
+    threads: 7
+    resources:
+        mem_mb=92000,
+        #slurm_extra="--qos=medium"
+    shell:
+        "python add_basic_stats.py {input} {output} {config[cc_genes_path]}"
+
+rule merge_gex_hto_adt:
+    input:
+        os.path.join(config["scratch_dir"], "dropletqc.Rds")
+    output:
+        os.path.join(config["scratch_dir"], "merge_gex_hto_adt.h5mu")
+    threads: 7
+    resources:
+        mem_mb=64000,
+        #slurm_extra="--qos=medium"
+    shell:
+        "python merge_gex_hto_adt.py {config[cumulus_out_dir]} \"{config[lib_csv]}\" {input[0]} {config[sunrise_cellbender_path]} {output}"
+
+rule run_dropletqc:
+    output:
+        os.path.join(config["scratch_dir"], "dropletqc.Rds")
+    threads: 8
+    resources:
+        mem_mb=16000,
+        #slurm_extra="--qos=medium"
+    shell:
+        "Rscript run_dropletqc.R \"{config[lib_csv]}\" {config[cumulus_out_dir]} {output}"
